@@ -1,0 +1,2 @@
+FROM  hyperledger/sawtooth-shell:chime
+WORKDIR /project

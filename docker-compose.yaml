@@ -1,0 +1,108 @@
+services:
+  settings-tp:
+    image: hyperledger/sawtooth-settings-tp:chime
+    depends_on:
+      - validator
+    entrypoint: settings-tp -vv -C tcp://validator:4004
+    networks:
+      - sawtooth-net
+
+  validator:
+    image: hyperledger/sawtooth-validator:chime
+    container_name: validator
+    expose:
+      - 4004
+      - 5050
+      - 8000
+      - 8800
+    ports:
+      - "4004:4004"
+    entrypoint: "bash -c \"sawadm keygen --force && sawtooth keygen my_key --force && sawset genesis -k /root/.sawtooth/keys/my_key.priv && sawset proposal create -k /root/.sawtooth/keys/my_key.priv sawtooth.consensus.algorithm.name=Devmode sawtooth.consensus.algorithm.version=0.1 -o config.batch && sawadm genesis config-genesis.batch config.batch && sawtooth-validator -vv --endpoint tcp://validator:8800 --bind component:tcp://eth0:4004 --bind network:tcp://eth0:8800 --bind consensus:tcp://eth0:5050 \""
+    networks:
+      - sawtooth-net
+
+  devmode-engine:
+    image: hyperledger/sawtooth-devmode-engine-rust:chime
+    container_name: sawtooth-devmode-engine-rust-default
+    depends_on:
+      - validator
+    entrypoint: devmode-engine-rust -C tcp://validator:5050
+    networks:
+      - sawtooth-net
+
+  rest-api:
+    image: hyperledger/sawtooth-rest-api:chime
+    container_name: sawtooth-rest-api-default
+    ports:
+      - "8008:8008"
+    depends_on:
+      - validator
+    entrypoint: sawtooth-rest-api -C tcp://validator:4004 --bind rest-api:8008
+    networks:
+      - sawtooth-net
+
+  shell:
+    image: hyperledger/sawtooth-shell:chime
+    container_name: sawtooth-shell-default
+    depends_on:
+      - rest-api
+    entrypoint: "bash -c \"sawtooth keygen --force && tail -f /dev/null \""
+    volumes:
+      - ./Sawtooth-SimpleWallet:/home/sawtooth/Sawtooth-SimpleWallet
+      - ~/.ssh/id_rsa.pub:/root/.ssh/authorized_keys
+    ports:
+      - "8022:22"
+    networks:
+      - sawtooth-net
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui:latest
+    container_name: swagger-ui
+    ports:
+      - "8009:8080"
+    environment:
+      SWAGGER_JSON: /tmp/openapi.yaml
+    command: "sh -c \"wget -q -O /tmp/openapi.yaml https://raw.githubusercontent.com/hyperledger/sawtooth-core/master/rest_api/openapi.yaml && /usr/share/nginx/run.sh \""
+    networks:
+      - sawtooth-net
+
+  simplewallet-tp-python:
+    build: ./transaction-processor
+    volumes:
+      - ./transaction-processor:/project
+    container_name: transaction-tp-python-default
+    entrypoint: >
+      sh -c "
+        chmod +x /project/main.py && \
+        ln -s /project/main.py /usr/bin/hello-tp-start && \
+        bash
+      "
+    depends_on:
+      - validator
+    networks:
+      - sawtooth-net
+
+  simplewallet-client:
+    build: ./client
+    volumes:
+      - ./client:/client
+    container_name: simplewallet-client-default
+    entrypoint: >
+      sh -c "
+        sawtooth keygen && \
+        chmod +x /client/balance.py /client/create-wallet.py /client/deposit.py /client/transfer.py /client/withdraw.py && \
+        ln -s /client/create-wallet.py /usr/bin/create-wallet && \
+        ln -s /client/deposit.py /usr/bin/deposit && \
+        ln -s /client/balance.py /usr/bin/balance && \
+        ln -s /client/withdraw.py /usr/bin/withdraw && \
+        ln -s /client/transfer.py /usr/bin/transfer && \
+        bash
+      "
+    depends_on:
+      - rest-api
+    networks:
+      - sawtooth-net
+
+networks:
+  sawtooth-net:
+    driver: bridge
